@@ -1,0 +1,605 @@
+/* Kiosk Discount Games — standalone vanilla implementation of the Claude Design canvas. */
+
+(function () {
+  "use strict";
+
+  var PASTELS = ["#FFE0EC", "#DDEEFF", "#E6E0FF", "#FFF1D0", "#DCF7E6", "#F2ECF9"];
+  var BOX_COLORS = ["#FFE0EC", "#DDEEFF", "#DCF7E6"];
+  var SWATCHES = ["#7A3FF2", "#E8452C", "#1F6FEB", "#12A15C", "#F0B429"];
+  var STORE_KEY = "kiosk-discount-games.cfg.v1";
+
+  var defaultCfg = {
+    brandName: "Bloom & Bean",
+    accent: "#7A3FF2",
+    playsPerUser: 3,
+    expiryDays: 14,
+    headline: "Play once, win a discount",
+    subhead: "Pick a game below. Every customer gets a try.",
+    winMessage: "Show this code at the counter to redeem.",
+    loseMessage: "No prize this time — come back tomorrow for another go.",
+    prizes: [
+      { label: "10% off", symbol: "10%", odds: 30, color: PASTELS[0] },
+      { label: "20% off", symbol: "20%", odds: 18, color: PASTELS[1] },
+      { label: "Free coffee", symbol: "FREE", odds: 12, color: PASTELS[2] },
+      { label: "5% off", symbol: "5%", odds: 25, color: PASTELS[3] },
+      { label: "50% off", symbol: "50%", odds: 3, color: PASTELS[4] },
+      { label: "Try again", symbol: "—", odds: 12, color: PASTELS[5] }
+    ]
+  };
+
+  function loadCfg() {
+    try {
+      var raw = localStorage.getItem(STORE_KEY);
+      if (!raw) return clone(defaultCfg);
+      var saved = JSON.parse(raw);
+      var cfg = clone(defaultCfg);
+      Object.keys(cfg).forEach(function (k) {
+        if (saved[k] !== undefined && saved[k] !== null) cfg[k] = saved[k];
+      });
+      if (!Array.isArray(cfg.prizes) || !cfg.prizes.length) cfg.prizes = clone(defaultCfg.prizes);
+      return cfg;
+    } catch (e) {
+      return clone(defaultCfg);
+    }
+  }
+
+  function saveCfg(cfg) {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(cfg)); } catch (e) { /* private mode */ }
+  }
+
+  function clone(v) { return JSON.parse(JSON.stringify(v)); }
+
+  function esc(v) {
+    return String(v == null ? "" : v)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
+  /* Darken a hex colour by `amount` (0..1) — used for the accent's pressed/deep tone. */
+  function shade(hex, amount) {
+    var m = /^#?([a-f\d]{6})$/i.exec(String(hex || ""));
+    if (!m) return hex;
+    var n = parseInt(m[1], 16);
+    var parts = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map(function (c) {
+      return Math.max(0, Math.min(255, Math.round(c * (1 - amount))));
+    });
+    return "#" + parts.map(function (c) { return ("0" + c.toString(16)).slice(-2); }).join("");
+  }
+
+  function tint(hex, amount) {
+    var m = /^#?([a-f\d]{6})$/i.exec(String(hex || ""));
+    if (!m) return hex;
+    var n = parseInt(m[1], 16);
+    var parts = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map(function (c) {
+      return Math.max(0, Math.min(255, Math.round(c + (255 - c) * amount)));
+    });
+    return "#" + parts.map(function (c) { return ("0" + c.toString(16)).slice(-2); }).join("");
+  }
+
+  var cfg = loadCfg();
+
+  var state = {
+    screen: "home",
+    busy: false,
+    rotation: 0,
+    reels: ["10%", "20%", "5%"],
+    picked: null,
+    revealed: false,
+    pickedPrize: "",
+    result: null,
+    coupon: "",
+    playsLeft: Number(cfg.playsPerUser) || 0
+  };
+
+  var timers = [];
+  var reelInt = null;
+  var locked = 0;
+  var root = document.getElementById("app");
+
+  function after(ms, fn) { timers.push(setTimeout(fn, ms)); }
+
+  function clearTimers() {
+    timers.forEach(clearTimeout);
+    timers = [];
+    if (reelInt) { clearInterval(reelInt); reelInt = null; }
+  }
+
+  function setState(patch) {
+    Object.keys(patch).forEach(function (k) { state[k] = patch[k]; });
+    render();
+  }
+
+  function setCfg(patch) {
+    Object.keys(patch).forEach(function (k) { cfg[k] = patch[k]; });
+    saveCfg(cfg);
+    render();
+  }
+
+  /* ---------- game logic ---------- */
+
+  function isWin(prize) { return !!prize && !/try again|no (win|prize)/i.test(prize.label); }
+
+  function draw() {
+    var prizes = cfg.prizes;
+    var total = prizes.reduce(function (a, p) { return a + (Number(p.odds) || 0); }, 0) || 1;
+    var r = Math.random() * total;
+    for (var i = 0; i < prizes.length; i++) {
+      r -= Number(prizes[i].odds) || 0;
+      if (r <= 0) return i;
+    }
+    return prizes.length - 1;
+  }
+
+  function makeCode() {
+    var cs = "ACDEFHJKLMNPRTUVWXY3479";
+    var out = "";
+    for (var i = 0; i < 6; i++) out += cs[Math.floor(Math.random() * cs.length)];
+    return out;
+  }
+
+  function land(i) {
+    var p = cfg.prizes[i];
+    setState({
+      result: p,
+      coupon: isWin(p) ? makeCode() : "",
+      busy: false,
+      playsLeft: Math.max(0, state.playsLeft - 1)
+    });
+  }
+
+  function spin() {
+    if (state.busy || state.playsLeft <= 0) return;
+    var i = draw();
+    var n = cfg.prizes.length;
+    var seg = 360 / n;
+    var center = i * seg + seg / 2;
+    var base = state.rotation - (state.rotation % 360);
+    setState({ busy: true, rotation: base + 360 * 5 + (360 - center) });
+    after(4400, function () { land(i); });
+  }
+
+  function pull() {
+    if (state.busy || state.playsLeft <= 0) return;
+    var i = draw();
+    var prizes = cfg.prizes;
+    var win = isWin(prizes[i]);
+    var others = prizes.filter(function (_, k) { return k !== i; });
+    var finals = win
+      ? [prizes[i].symbol, prizes[i].symbol, prizes[i].symbol]
+      : [prizes[i].symbol, (others[0] || prizes[i]).symbol, (others[1] || prizes[i]).symbol];
+
+    setState({ busy: true });
+    locked = 0;
+    reelInt = setInterval(function () {
+      setState({
+        reels: state.reels.map(function (v, k) {
+          return locked > k ? v : prizes[Math.floor(Math.random() * prizes.length)].symbol;
+        })
+      });
+    }, 70);
+
+    [900, 1500, 2100].forEach(function (t, k) {
+      after(t, function () {
+        locked = k + 1;
+        setState({
+          reels: state.reels.map(function (v, j) { return j === k ? finals[k] : v; })
+        });
+        if (k === 2) {
+          clearInterval(reelInt); reelInt = null;
+          after(500, function () { land(i); });
+        }
+      });
+    });
+  }
+
+  function pick(k) {
+    if (state.busy || state.picked !== null || state.playsLeft <= 0) return;
+    var i = draw();
+    setState({ busy: true, picked: k });
+    after(450, function () { setState({ revealed: true, pickedPrize: cfg.prizes[i].label }); });
+    after(1200, function () { land(i); });
+  }
+
+  function go(screen) {
+    clearTimers();
+    locked = 0;
+    setState({ screen: screen, result: null, picked: null, revealed: false, pickedPrize: "", busy: false });
+  }
+
+  /* ---------- rendering ---------- */
+
+  function applyAccent() {
+    var s = document.documentElement.style;
+    s.setProperty("--accent", cfg.accent);
+    s.setProperty("--accent-dark", shade(cfg.accent, 0.24));
+    s.setProperty("--accent-soft", tint(cfg.accent, 0.9));
+    s.setProperty("--accent-line", tint(cfg.accent, 0.82));
+  }
+
+  function derived() {
+    var prizes = cfg.prizes;
+    var n = prizes.length || 1;
+    var seg = 360 / n;
+    var total = prizes.reduce(function (a, p) { return a + (Number(p.odds) || 0); }, 0);
+    var gradient = "conic-gradient(" + prizes.map(function (p, i) {
+      return p.color + " " + (i * seg) + "deg " + ((i + 1) * seg) + "deg";
+    }).join(", ") + ")";
+    var expiry = new Date(Date.now() + (Number(cfg.expiryDays) || 0) * 864e5);
+    return {
+      seg: seg,
+      total: total,
+      gradient: gradient,
+      won: isWin(state.result),
+      expiryLine: "Valid until " + expiry.toLocaleDateString(undefined, {
+        day: "numeric", month: "long", year: "numeric"
+      })
+    };
+  }
+
+  function topbarHtml() {
+    var initial = (cfg.brandName || "S").trim().charAt(0).toUpperCase() || "S";
+    var playsLabel = state.playsLeft > 0
+      ? state.playsLeft + " play" + (state.playsLeft === 1 ? "" : "s") + " left"
+      : "No plays left";
+    return '' +
+      '<div class="topbar">' +
+        '<div class="brand">' +
+          '<div class="brand-mark">' + esc(initial) + '</div>' +
+          '<div class="brand-name">' + esc(cfg.brandName) + '</div>' +
+        '</div>' +
+        '<div class="topbar-right">' +
+          '<div class="plays-pill">' + esc(playsLabel) + '</div>' +
+          '<button class="icon-btn" data-action="open-admin" aria-label="Game settings" title="Game settings">⚙</button>' +
+        '</div>' +
+      '</div>';
+  }
+
+  function homeHtml() {
+    return '' +
+      '<div class="screen">' +
+        '<div class="hero">' +
+          '<h1>' + esc(cfg.headline) + '</h1>' +
+          '<p>' + esc(cfg.subhead) + '</p>' +
+        '</div>' +
+        '<div class="game-grid">' +
+          '<button class="game-card game-card--wheel" data-action="play" data-game="wheel">' +
+            '<div class="art-wheel"></div>' +
+            '<div class="card-text">' +
+              '<h2>Spin the wheel</h2>' +
+              '<div class="card-sub">One spin, one prize.</div>' +
+            '</div>' +
+            '<div class="card-cta">Play</div>' +
+          '</button>' +
+          '<button class="game-card game-card--slots" data-action="play" data-game="slots">' +
+            '<div class="art-slots"><span></span><span></span><span></span></div>' +
+            '<div class="card-text">' +
+              '<h2>Slot machine</h2>' +
+              '<div class="card-sub">Match three, take the deal.</div>' +
+            '</div>' +
+            '<div class="card-cta">Play</div>' +
+          '</button>' +
+          '<button class="game-card game-card--boxes" data-action="play" data-game="boxes">' +
+            '<div class="art-boxes"><span></span><span class="tall"></span><span></span></div>' +
+            '<div class="card-text">' +
+              '<h2>Mystery boxes</h2>' +
+              '<div class="card-sub">Pick one of three.</div>' +
+            '</div>' +
+            '<div class="card-cta">Play</div>' +
+          '</button>' +
+        '</div>' +
+      '</div>';
+  }
+
+  function wheelHtml(d) {
+    var labels = cfg.prizes.map(function (p, i) {
+      var t = "rotate(" + (i * d.seg + d.seg / 2) + "deg) translateY(-172px)";
+      return '<div class="wheel-label" style="transform: ' + t + ';">' + esc(p.label) + '</div>';
+    }).join("");
+    var rot = "rotate(" + state.rotation + "deg)";
+    var disabled = state.busy || state.playsLeft <= 0;
+    return '' +
+      '<div class="screen screen--game">' +
+        '<button class="back-btn" data-action="home">← Back</button>' +
+        '<h1 class="game-title">Spin the wheel</h1>' +
+        '<div class="wheel-stage">' +
+          '<div class="wheel-pointer"></div>' +
+          '<div class="wheel-disc" style="background: ' + d.gradient + '; transform: ' + rot + ';"></div>' +
+          '<div class="wheel-labels" style="transform: ' + rot + ';">' + labels + '</div>' +
+          '<div class="wheel-hub">WIN</div>' +
+        '</div>' +
+        '<button class="big-btn" data-action="spin"' + (disabled ? " disabled" : "") + '>' +
+          (state.busy ? "Spinning…" : "SPIN") +
+        '</button>' +
+      '</div>';
+  }
+
+  function slotsHtml() {
+    var reels = state.reels.map(function (symbol) {
+      return '<div class="reel">' + esc(symbol) + '</div>';
+    }).join("");
+    var disabled = state.busy || state.playsLeft <= 0;
+    return '' +
+      '<div class="screen screen--game" style="gap: 38px;">' +
+        '<button class="back-btn" data-action="home">← Back</button>' +
+        '<h1 class="game-title">Slot machine</h1>' +
+        '<div class="reel-box">' + reels + '</div>' +
+        '<button class="big-btn" data-action="pull"' + (disabled ? " disabled" : "") + '>' +
+          (state.busy ? "Rolling…" : "PULL") +
+        '</button>' +
+      '</div>';
+  }
+
+  function boxesHtml() {
+    var boxes = [0, 1, 2].map(function (k) {
+      var isPicked = state.picked === k;
+      var bg = isPicked && state.revealed ? "#FFF" : BOX_COLORS[k];
+      var border = isPicked ? cfg.accent : "transparent";
+      var transform = isPicked
+        ? (state.revealed ? "scale(1.06)" : "scale(.94)")
+        : (state.picked === null ? "scale(1)" : "scale(.92)");
+      var face = isPicked && state.revealed ? (state.pickedPrize || "") : String(k + 1);
+      return '<button class="mystery-box" data-action="pick" data-index="' + k + '" ' +
+        'style="background: ' + bg + '; border-color: ' + border + '; transform: ' + transform + ';">' +
+        esc(face) + '</button>';
+    }).join("");
+    return '' +
+      '<div class="screen screen--game" style="gap: 38px;">' +
+        '<button class="back-btn" data-action="home">← Back</button>' +
+        '<div class="box-head">' +
+          '<h1 class="game-title">Mystery boxes</h1>' +
+          '<div class="game-sub">Tap a box to open it.</div>' +
+        '</div>' +
+        '<div class="box-row">' + boxes + '</div>' +
+      '</div>';
+  }
+
+  function resultHtml(d) {
+    if (!state.result) return "";
+    var couponBlock = d.won
+      ? '<div class="coupon-wrap">' +
+          '<div class="coupon">' + esc(state.coupon) + '</div>' +
+          '<div class="coupon-expiry">' + esc(d.expiryLine) + '</div>' +
+        '</div>'
+      : "";
+    var noPlays = state.playsLeft <= 0;
+    return '' +
+      '<div class="overlay" role="dialog" aria-modal="true">' +
+        '<div class="result-card">' +
+          '<div class="result-kicker">' + (d.won ? "You won" : "So close") + '</div>' +
+          '<div class="result-prize">' + esc(state.result.label) + '</div>' +
+          '<div class="result-msg">' + esc(d.won ? cfg.winMessage : cfg.loseMessage) + '</div>' +
+          couponBlock +
+          '<div class="result-actions">' +
+            '<button class="btn-primary" data-action="play-again"' + (noPlays ? " disabled" : "") + '>' +
+              (noPlays ? "No plays left" : "Play again") +
+            '</button>' +
+            '<button class="btn-soft" data-action="finish">Done</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+  }
+
+  function adminHtml(d) {
+    var rows = cfg.prizes.map(function (p, i) {
+      return '' +
+        '<div class="prize-grid prize-row" style="background: ' + p.color + ';">' +
+          '<input class="field" value="' + esc(p.label) + '" data-field="prize-label" data-index="' + i + '" ' +
+            'data-fkey="label-' + i + '" aria-label="Prize name" />' +
+          '<input class="field" value="' + esc(p.symbol) + '" data-field="prize-symbol" data-index="' + i + '" ' +
+            'data-fkey="symbol-' + i + '" aria-label="Reel symbol" />' +
+          '<div class="range-cell">' +
+            '<input type="range" min="0" max="100" step="1" value="' + esc(p.odds) + '" ' +
+              'data-field="prize-odds" data-index="' + i + '" data-fkey="range-' + i + '" aria-label="Odds" />' +
+          '</div>' +
+          '<input class="field field--center" value="' + esc(p.odds) + '" data-field="prize-odds" ' +
+            'data-index="' + i + '" data-fkey="odds-' + i + '" inputmode="numeric" aria-label="Chance" />' +
+          '<button class="row-remove" data-action="remove-prize" data-index="' + i + '" aria-label="Remove prize">×</button>' +
+        '</div>';
+    }).join("");
+
+    var swatches = SWATCHES.map(function (color) {
+      var ring = cfg.accent === color ? "#2A2140" : "#fff";
+      return '<button class="swatch" data-action="swatch" data-color="' + color + '" ' +
+        'style="background: ' + color + '; border: 3px solid ' + ring + ';" ' +
+        'aria-label="Accent ' + color + '"></button>';
+    }).join("");
+
+    var oddsNote = d.total === 100
+      ? "Odds total 100% ✓"
+      : "Odds total " + d.total + "% — normalised automatically";
+    var oddsColor = d.total === 100 ? "#2E9E63" : "#C2803A";
+
+    return '' +
+      '<div class="admin">' +
+        '<div class="admin-inner">' +
+          '<div class="admin-head">' +
+            '<div class="admin-title">Game settings</div>' +
+            '<button class="btn-dark" data-action="close-admin">Done</button>' +
+          '</div>' +
+
+          '<div class="panel">' +
+            '<div class="panel-head">' +
+              '<div class="panel-title">Prizes &amp; win odds</div>' +
+              '<div class="odds-note" style="color: ' + oddsColor + ';">' + esc(oddsNote) + '</div>' +
+            '</div>' +
+            '<div class="prize-grid prize-headings">' +
+              '<div>Prize name</div><div>Reel symbol</div><div>Odds</div><div>Chance</div><div></div>' +
+            '</div>' +
+            '<div class="prize-rows">' + rows + '</div>' +
+            '<button class="btn-pill-soft" data-action="add-prize">+ Add prize</button>' +
+          '</div>' +
+
+          '<div class="two-col">' +
+            '<div class="panel panel-stack">' +
+              '<div class="panel-title">Play limits</div>' +
+              '<label class="label" for="f-plays">Plays per customer</label>' +
+              '<input id="f-plays" class="field-lg" value="' + esc(cfg.playsPerUser) + '" ' +
+                'data-field="playsPerUser" data-fkey="playsPerUser" inputmode="numeric" />' +
+              '<label class="label" for="f-expiry">Coupon valid for (days)</label>' +
+              '<input id="f-expiry" class="field-lg" value="' + esc(cfg.expiryDays) + '" ' +
+                'data-field="expiryDays" data-fkey="expiryDays" inputmode="numeric" />' +
+            '</div>' +
+            '<div class="panel panel-stack">' +
+              '<div class="panel-title">Brand</div>' +
+              '<label class="label" for="f-brand">Store name</label>' +
+              '<input id="f-brand" class="field-lg" value="' + esc(cfg.brandName) + '" ' +
+                'data-field="brandName" data-fkey="brandName" />' +
+              '<label class="label">Accent colour</label>' +
+              '<div class="swatches">' + swatches + '</div>' +
+            '</div>' +
+          '</div>' +
+
+          '<div class="panel panel-stack">' +
+            '<div class="panel-title">Copy</div>' +
+            '<div class="copy-grid">' +
+              copyField("Headline", "headline", cfg.headline) +
+              copyField("Subhead", "subhead", cfg.subhead) +
+              copyField("Win message", "winMessage", cfg.winMessage) +
+              copyField("Lose message", "loseMessage", cfg.loseMessage) +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+  }
+
+  function copyField(label, field, value) {
+    return '' +
+      '<div class="copy-field">' +
+        '<label class="label" for="f-' + field + '">' + esc(label) + '</label>' +
+        '<input id="f-' + field + '" class="field-lg" value="' + esc(value) + '" ' +
+          'data-field="' + field + '" data-fkey="' + field + '" />' +
+      '</div>';
+  }
+
+  function render() {
+    applyAccent();
+    var d = derived();
+
+    var body = "";
+    if (state.screen === "wheel") body = wheelHtml(d);
+    else if (state.screen === "slots") body = slotsHtml();
+    else if (state.screen === "boxes") body = boxesHtml();
+    else body = homeHtml();
+
+    var html = '<div class="shell">' + topbarHtml() + body + '</div>' +
+      resultHtml(d) +
+      (state.screen === "admin" ? adminHtml(d) : "");
+
+    var focus = captureFocus();
+    root.innerHTML = html;
+    restoreFocus(focus);
+
+    document.title = (cfg.brandName ? cfg.brandName + " — " : "") + "Kiosk Discount Games";
+  }
+
+  function captureFocus() {
+    var el = document.activeElement;
+    if (!el || !el.dataset || !el.dataset.fkey) return null;
+    var info = { key: el.dataset.fkey, start: null, end: null };
+    try { info.start = el.selectionStart; info.end = el.selectionEnd; } catch (e) { /* range inputs */ }
+    return info;
+  }
+
+  function restoreFocus(info) {
+    if (!info) return;
+    var el = root.querySelector('[data-fkey="' + info.key + '"]');
+    if (!el) return;
+    el.focus();
+    if (info.start != null) {
+      try { el.setSelectionRange(info.start, info.end); } catch (e) { /* not a text input */ }
+    }
+  }
+
+  /* ---------- events ---------- */
+
+  root.addEventListener("click", function (e) {
+    var el = e.target.closest("[data-action]");
+    if (!el || el.disabled) return;
+    var action = el.dataset.action;
+    var index = Number(el.dataset.index);
+
+    switch (action) {
+      case "play": go(el.dataset.game); break;
+      case "home": go("home"); break;
+      case "spin": spin(); break;
+      case "pull": pull(); break;
+      case "pick": pick(index); break;
+      case "open-admin":
+        clearTimers();
+        setState({ screen: "admin", result: null, busy: false });
+        break;
+      case "close-admin":
+        setState({
+          screen: "home",
+          playsLeft: Math.min(state.playsLeft, Number(cfg.playsPerUser) || 0) || Number(cfg.playsPerUser) || 0
+        });
+        break;
+      case "play-again":
+        clearTimers();
+        locked = 0;
+        setState({ result: null, picked: null, revealed: false, pickedPrize: "", busy: false, reels: ["10%", "20%", "5%"] });
+        break;
+      case "finish": go("home"); break;
+      case "add-prize":
+        cfg.prizes = cfg.prizes.concat([{
+          label: "New prize", symbol: "★", odds: 5,
+          color: PASTELS[cfg.prizes.length % PASTELS.length]
+        }]);
+        setCfg({ prizes: cfg.prizes });
+        break;
+      case "remove-prize":
+        setCfg({ prizes: cfg.prizes.filter(function (_, k) { return k !== index; }) });
+        break;
+      case "swatch":
+        setCfg({ accent: el.dataset.color });
+        break;
+    }
+  });
+
+  root.addEventListener("input", function (e) {
+    var el = e.target;
+    var field = el.dataset && el.dataset.field;
+    if (!field) return;
+    var index = Number(el.dataset.index);
+    var value = el.value;
+
+    if (field === "prize-label" || field === "prize-symbol" || field === "prize-odds") {
+      var key = field === "prize-label" ? "label" : field === "prize-symbol" ? "symbol" : "odds";
+      var val = key === "odds" ? Math.max(0, Math.min(100, Number(value) || 0)) : value;
+      cfg.prizes = cfg.prizes.map(function (p, k) {
+        if (k !== index) return p;
+        var next = {}; Object.keys(p).forEach(function (kk) { next[kk] = p[kk]; });
+        next[key] = val;
+        return next;
+      });
+      setCfg({ prizes: cfg.prizes });
+      return;
+    }
+
+    if (field === "playsPerUser") {
+      var plays = Number(value) || 0;
+      cfg.playsPerUser = plays;
+      saveCfg(cfg);
+      setState({ playsLeft: plays });
+      return;
+    }
+
+    if (field === "expiryDays") { setCfg({ expiryDays: Number(value) || 0 }); return; }
+
+    setCfg((function () { var o = {}; o[field] = value; return o; })());
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    if (state.screen === "admin") {
+      setState({
+        screen: "home",
+        playsLeft: Math.min(state.playsLeft, Number(cfg.playsPerUser) || 0) || Number(cfg.playsPerUser) || 0
+      });
+    } else if (state.result) {
+      go("home");
+    }
+  });
+
+  render();
+})();
