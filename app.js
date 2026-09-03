@@ -24,6 +24,16 @@
       { label: "5% off", symbol: "5%", odds: 25, color: PASTELS[3] },
       { label: "50% off", symbol: "50%", odds: 3, color: PASTELS[4] },
       { label: "Try again", symbol: "—", odds: 12, color: PASTELS[5] }
+    ],
+    reels: [
+      { label: "10% off", symbol: "10%", odds: 40, color: PASTELS[0] },
+      { label: "20% off", symbol: "20%", odds: 25, color: PASTELS[1] },
+      { label: "Try again", symbol: "—", odds: 35, color: PASTELS[5] }
+    ],
+    boxes: [
+      { label: "5% off", symbol: "5%", odds: 45, color: PASTELS[3] },
+      { label: "Free coffee", symbol: "FREE", odds: 20, color: PASTELS[2] },
+      { label: "Try again", symbol: "—", odds: 35, color: PASTELS[5] }
     ]
   };
 
@@ -37,6 +47,8 @@
         if (saved[k] !== undefined && saved[k] !== null) cfg[k] = saved[k];
       });
       if (!Array.isArray(cfg.prizes) || !cfg.prizes.length) cfg.prizes = clone(defaultCfg.prizes);
+      if (!Array.isArray(cfg.reels) || !cfg.reels.length) cfg.reels = clone(defaultCfg.reels);
+      if (!Array.isArray(cfg.boxes) || !cfg.boxes.length) cfg.boxes = clone(defaultCfg.boxes);
       return cfg;
     } catch (e) {
       return clone(defaultCfg);
@@ -82,7 +94,7 @@
     screen: "home",
     busy: false,
     rotation: 0,
-    reels: ["10%", "20%", "5%"],
+    reels: (cfg.reels || []).slice(0, 3).map(function (p) { return p.symbol; }),
     picked: null,
     revealed: false,
     pickedPrize: "",
@@ -126,8 +138,8 @@
 
   function isWin(prize) { return !!prize && !/try again|no (win|prize)/i.test(prize.label); }
 
-  function draw() {
-    var prizes = cfg.prizes;
+  function draw(list) {
+    var prizes = list || cfg.prizes;
     var total = prizes.reduce(function (a, p) { return a + (Number(p.odds) || 0); }, 0) || 1;
     var r = Math.random() * total;
     for (var i = 0; i < prizes.length; i++) {
@@ -144,8 +156,8 @@
     return out;
   }
 
-  function land(i) {
-    var p = cfg.prizes[i];
+  function land(prize) {
+    var p = prize || cfg.prizes[0];
     setState({
       result: p,
       coupon: isWin(p) ? makeCode() : "",
@@ -177,13 +189,13 @@
       }
     }
     setState({ busy: true, rotation: base + 360 * extraTurns + (360 - center) });
-    after(Math.round(duration * 1000) + 200, function () { land(i); });
+    after(Math.round(duration * 1000) + 200, function () { land(cfg.prizes[i]); });
   }
 
   function pull() {
     if (state.busy || state.playsLeft <= 0) return;
-    var i = draw();
-    var prizes = cfg.prizes;
+    var i = draw(cfg.reels);
+    var prizes = cfg.reels;
     var win = isWin(prizes[i]);
     var others = prizes.filter(function (_, k) { return k !== i; });
     var finals = win
@@ -208,7 +220,7 @@
         });
         if (k === 2) {
           clearInterval(reelInt); reelInt = null;
-          after(500, function () { land(i); });
+          after(500, function () { land(prizes[i]); });
         }
       });
     });
@@ -216,10 +228,10 @@
 
   function pick(k) {
     if (state.busy || state.picked !== null || state.playsLeft <= 0) return;
-    var i = draw();
+    var i = draw(cfg.boxes);
     setState({ busy: true, picked: k });
-    after(450, function () { setState({ revealed: true, pickedPrize: cfg.prizes[i].label }); });
-    after(1200, function () { land(i); });
+    after(450, function () { setState({ revealed: true, pickedPrize: cfg.boxes[i].label }); });
+    after(1200, function () { land(cfg.boxes[i]); });
   }
 
   function go(screen) {
@@ -354,9 +366,9 @@
   }
 
   function boxesHtml() {
-    var boxes = [0, 1, 2].map(function (k) {
+    var boxes = cfg.boxes.map(function (_, k) {
       var isPicked = state.picked === k;
-      var bg = isPicked && state.revealed ? "#FFF" : BOX_COLORS[k];
+      var bg = isPicked && state.revealed ? "#FFF" : BOX_COLORS[k % BOX_COLORS.length];
       var border = isPicked ? cfg.accent : "transparent";
       var transform = isPicked
         ? (state.revealed ? "scale(1.06)" : "scale(.94)")
@@ -404,23 +416,6 @@
   }
 
   function adminHtml(d) {
-    var rows = cfg.prizes.map(function (p, i) {
-      return '' +
-        '<div class="prize-grid prize-row" style="background: ' + p.color + ';">' +
-          '<input class="field" value="' + esc(p.label) + '" data-field="prize-label" data-index="' + i + '" ' +
-            'data-fkey="label-' + i + '" aria-label="Prize name" />' +
-          '<input class="field" value="' + esc(p.symbol) + '" data-field="prize-symbol" data-index="' + i + '" ' +
-            'data-fkey="symbol-' + i + '" aria-label="Reel symbol" />' +
-          '<div class="range-cell">' +
-            '<input type="range" min="0" max="100" step="1" value="' + esc(p.odds) + '" ' +
-              'data-field="prize-odds" data-index="' + i + '" data-fkey="range-' + i + '" aria-label="Odds" />' +
-          '</div>' +
-          '<input class="field field--center" value="' + esc(p.odds) + '" data-field="prize-odds" ' +
-            'data-index="' + i + '" data-fkey="odds-' + i + '" inputmode="numeric" aria-label="Chance" />' +
-          '<button class="row-remove" data-action="remove-prize" data-index="' + i + '" aria-label="Remove prize">×</button>' +
-        '</div>';
-    }).join("");
-
     var swatches = SWATCHES.map(function (color) {
       var ring = cfg.accent === color ? "#2A2140" : "#fff";
       return '<button class="swatch" data-action="swatch" data-color="' + color + '" ' +
@@ -428,10 +423,46 @@
         'aria-label="Accent ' + color + '"></button>';
     }).join("");
 
-    var oddsNote = d.total === 100
-      ? "Odds total 100% ✓"
-      : "Odds total " + d.total + "% — normalised automatically";
-    var oddsColor = d.total === 100 ? "#2E9E63" : "#C2803A";
+    function outcomeRows(key) {
+      var list = cfg[key];
+      return list.map(function (p, i) {
+        return '' +
+          '<div class="prize-grid prize-row" style="background: ' + p.color + ';">' +
+            '<input class="field" value="' + esc(p.label) + '" data-field="' + key + '-label" data-index="' + i + '" ' +
+              'data-fkey="' + key + '-label-' + i + '" aria-label="Prize name" />' +
+            '<input class="field" value="' + esc(p.symbol) + '" data-field="' + key + '-symbol" data-index="' + i + '" ' +
+              'data-fkey="' + key + '-symbol-' + i + '" aria-label="Reel symbol" />' +
+            '<div class="range-cell">' +
+              '<input type="range" min="0" max="100" step="1" value="' + esc(p.odds) + '" ' +
+                'data-field="' + key + '-odds" data-index="' + i + '" data-fkey="' + key + '-range-' + i + '" aria-label="Odds" />' +
+            '</div>' +
+            '<input class="field field--center" value="' + esc(p.odds) + '" data-field="' + key + '-odds" ' +
+              'data-index="' + i + '" data-fkey="' + key + '-odds-' + i + '" inputmode="numeric" aria-label="Chance" />' +
+            '<button class="row-remove" data-action="remove-prize" data-set="' + key + '" data-index="' + i + '" aria-label="Remove prize">×</button>' +
+          '</div>';
+      }).join("");
+    }
+
+    function outcomePanel(title, key) {
+      var list = cfg[key];
+      var total = list.reduce(function (a, p) { return a + (Number(p.odds) || 0); }, 0);
+      var note = total === 100
+        ? "Odds total 100% ✓"
+        : "Odds total " + total + "% — normalised automatically";
+      var color = total === 100 ? "#2E9E63" : "#C2803A";
+      return '' +
+        '<div class="panel">' +
+          '<div class="panel-head">' +
+            '<div class="panel-title">' + esc(title) + '</div>' +
+            '<div class="odds-note" style="color: ' + color + ';">' + esc(note) + '</div>' +
+          '</div>' +
+          '<div class="prize-grid prize-headings">' +
+            '<div>Prize name</div><div>Reel symbol</div><div>Odds</div><div>Chance</div><div></div>' +
+          '</div>' +
+          '<div class="prize-rows">' + outcomeRows(key) + '</div>' +
+          '<button class="btn-pill-soft" data-action="add-prize" data-set="' + key + '">+ Add prize</button>' +
+        '</div>';
+    }
 
     return '' +
       '<div class="admin">' +
@@ -441,17 +472,9 @@
             '<button class="btn-dark" data-action="close-admin">Done</button>' +
           '</div>' +
 
-          '<div class="panel">' +
-            '<div class="panel-head">' +
-              '<div class="panel-title">Prizes &amp; win odds</div>' +
-              '<div class="odds-note" style="color: ' + oddsColor + ';">' + esc(oddsNote) + '</div>' +
-            '</div>' +
-            '<div class="prize-grid prize-headings">' +
-              '<div>Prize name</div><div>Reel symbol</div><div>Odds</div><div>Chance</div><div></div>' +
-            '</div>' +
-            '<div class="prize-rows">' + rows + '</div>' +
-            '<button class="btn-pill-soft" data-action="add-prize">+ Add prize</button>' +
-          '</div>' +
+          outcomePanel("Spin the wheel prizes", "prizes") +
+          outcomePanel("Slot machine rewards", "reels") +
+          outcomePanel("Mystery box contents", "boxes") +
 
           '<div class="two-col">' +
             '<div class="panel panel-stack">' +
@@ -581,18 +604,28 @@
         locked = 0;
         drag.active = false;
         if (momentumRaf) { cancelAnimationFrame(momentumRaf); momentumRaf = null; }
-        setState({ result: null, picked: null, revealed: false, pickedPrize: "", busy: false, reels: ["10%", "20%", "5%"] });
+        setState({ result: null, picked: null, revealed: false, pickedPrize: "", busy: false, reels: (cfg.reels || []).slice(0, 3).map(function (p) { return p.symbol; }) });
         break;
       case "finish": go("home"); break;
       case "add-prize":
-        cfg.prizes = cfg.prizes.concat([{
-          label: "New prize", symbol: "★", odds: 5,
-          color: PASTELS[cfg.prizes.length % PASTELS.length]
-        }]);
-        setCfg({ prizes: cfg.prizes });
+        {
+          var set = el.dataset.set || "prizes";
+          cfg[set] = (cfg[set] || []).concat([{
+            label: "New prize", symbol: "★", odds: 5,
+            color: PASTELS[(cfg[set] || []).length % PASTELS.length]
+          }]);
+          setCfg((function () { var o = {}; o[set] = cfg[set]; return o; })());
+        }
         break;
       case "remove-prize":
-        setCfg({ prizes: cfg.prizes.filter(function (_, k) { return k !== index; }) });
+        {
+          var rset = el.dataset.set || "prizes";
+          setCfg((function () {
+            var o = {};
+            o[rset] = (cfg[rset] || []).filter(function (_, k) { return k !== index; });
+            return o;
+          })());
+        }
         break;
       case "swatch":
         setCfg({ accent: el.dataset.color });
@@ -607,16 +640,19 @@
     var index = Number(el.dataset.index);
     var value = el.value;
 
-    if (field === "prize-label" || field === "prize-symbol" || field === "prize-odds") {
-      var key = field === "prize-label" ? "label" : field === "prize-symbol" ? "symbol" : "odds";
+    if (field === "prize-label" || field === "prize-symbol" || field === "prize-odds" ||
+        field === "reels-label" || field === "reels-symbol" || field === "reels-odds" ||
+        field === "boxes-label" || field === "boxes-symbol" || field === "boxes-odds") {
+      var set = field.split("-")[0];
+      var key = /-label$/.test(field) ? "label" : /-symbol$/.test(field) ? "symbol" : "odds";
       var val = key === "odds" ? Math.max(0, Math.min(100, Number(value) || 0)) : value;
-      cfg.prizes = cfg.prizes.map(function (p, k) {
+      cfg[set] = (cfg[set] || []).map(function (p, k) {
         if (k !== index) return p;
         var next = {}; Object.keys(p).forEach(function (kk) { next[kk] = p[kk]; });
         next[key] = val;
         return next;
       });
-      setCfg({ prizes: cfg.prizes });
+      setCfg((function () { var o = {}; o[set] = cfg[set]; return o; })());
       return;
     }
 
