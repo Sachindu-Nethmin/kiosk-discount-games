@@ -97,6 +97,12 @@
   var paintedRotation = 0;
   var root = document.getElementById("app");
 
+  /* --- drag-to-spin state --- */
+  var drag = { active: false, startAngle: 0, baseRotation: 0, lastAngle: 0, lastTime: 0, velocity: 0 };
+  var momentumRaf = null;
+  var wheelCenterX = 0;
+  var wheelCenterY = 0;
+
   function after(ms, fn) { timers.push(setTimeout(fn, ms)); }
 
   function clearTimers() {
@@ -148,15 +154,30 @@
     });
   }
 
-  function spin() {
+  function spin(optionalVelocity) {
     if (state.busy || state.playsLeft <= 0) return;
     var i = draw();
     var n = cfg.prizes.length;
     var seg = 360 / n;
     var center = i * seg + seg / 2;
     var base = state.rotation - (state.rotation % 360);
-    setState({ busy: true, rotation: base + 360 * 5 + (360 - center) });
-    after(4400, function () { land(i); });
+    var extraTurns, duration;
+    if (typeof optionalVelocity === "number" && Math.abs(optionalVelocity) > 2) {
+      var absVel = Math.abs(optionalVelocity);
+      extraTurns = Math.max(3, Math.min(12, absVel * 0.6));
+      duration = Math.max(2, Math.min(6, extraTurns / absVel * 2));
+    } else {
+      extraTurns = 5;
+      duration = 4.2;
+    }
+    var parts = root.querySelectorAll(".wheel-disc, .wheel-labels");
+    if (parts.length) {
+      for (var j = 0; j < parts.length; j++) {
+        parts[j].style.transition = "transform " + duration + "s cubic-bezier(.13, .72, .16, 1)";
+      }
+    }
+    setState({ busy: true, rotation: base + 360 * extraTurns + (360 - center) });
+    after(Math.round(duration * 1000) + 200, function () { land(i); });
   }
 
   function pull() {
@@ -204,6 +225,8 @@
   function go(screen) {
     clearTimers();
     locked = 0;
+    drag.active = false;
+    if (momentumRaf) { cancelAnimationFrame(momentumRaf); momentumRaf = null; }
     setState({ screen: screen, result: null, picked: null, revealed: false, pickedPrize: "", busy: false });
   }
 
@@ -494,14 +517,17 @@
     document.title = (cfg.brandName ? cfg.brandName + " — " : "") + "Kiosk Discount Games";
   }
 
-  function spinWheelTo(deg) {
-    if (state.screen !== "wheel" || deg === paintedRotation) return;
+  function spinWheelTo(deg, skipTransition) {
+    if (state.screen !== "wheel" || (deg === paintedRotation && !skipTransition)) return;
     var parts = root.querySelectorAll(".wheel-disc, .wheel-labels");
     if (!parts.length) return;
     requestAnimationFrame(function () {
       requestAnimationFrame(function () {
         paintedRotation = deg;
         for (var i = 0; i < parts.length; i++) {
+          if (skipTransition) {
+            parts[i].style.transition = "none";
+          }
           parts[i].style.transform = "rotate(" + deg + "deg)";
         }
       });
@@ -553,6 +579,8 @@
       case "play-again":
         clearTimers();
         locked = 0;
+        drag.active = false;
+        if (momentumRaf) { cancelAnimationFrame(momentumRaf); momentumRaf = null; }
         setState({ result: null, picked: null, revealed: false, pickedPrize: "", busy: false, reels: ["10%", "20%", "5%"] });
         break;
       case "finish": go("home"); break;
@@ -616,6 +644,67 @@
       go("home");
     }
   });
+
+  /* --- drag-to-spin via pointer events --- */
+
+  function angleFromCenter(x, y) {
+    return Math.atan2(x - wheelCenterX, -(y - wheelCenterY)) * (180 / Math.PI);
+  }
+
+  function onDragPointerDown(e) {
+    var stage = e.target.closest(".wheel-stage");
+    if (!stage) return;
+    if (state.busy || state.playsLeft <= 0) return;
+    if (momentumRaf) { cancelAnimationFrame(momentumRaf); momentumRaf = null; }
+    var rect = stage.getBoundingClientRect();
+    wheelCenterX = rect.left + rect.width / 2;
+    wheelCenterY = rect.top + rect.height / 2;
+    drag.active = true;
+    drag.startAngle = angleFromCenter(e.clientX, e.clientY);
+    drag.baseRotation = state.rotation;
+    drag.lastAngle = drag.startAngle;
+    drag.lastTime = e.timeStamp;
+    drag.velocity = 0;
+    stage.classList.add("dragging");
+    var parts = root.querySelectorAll(".wheel-disc, .wheel-labels");
+    for (var i = 0; i < parts.length; i++) {
+      parts[i].style.transition = "none";
+    }
+    e.preventDefault();
+  }
+
+  function onDragPointerMove(e) {
+    if (!drag.active) return;
+    var currentAngle = angleFromCenter(e.clientX, e.clientY);
+    var delta = currentAngle - drag.lastAngle;
+    if (delta > 180) delta -= 360;
+    if (delta < -180) delta += 360;
+    var dt = e.timeStamp - drag.lastTime;
+    if (dt > 0) {
+      var instantVelocity = delta / dt * 16;
+      drag.velocity = drag.velocity * 0.6 + instantVelocity * 0.4;
+    }
+    drag.lastAngle = currentAngle;
+    drag.lastTime = e.timeStamp;
+    var newRotation = state.rotation + delta;
+    setState({ rotation: newRotation });
+    e.preventDefault();
+  }
+
+  function onDragPointerUp(e) {
+    if (!drag.active) return;
+    drag.active = false;
+    var stage = e.target.closest(".wheel-stage") || root.querySelector(".wheel-stage");
+    if (stage) stage.classList.remove("dragging");
+    if (Math.abs(drag.velocity) > 0.5) {
+      spin(drag.velocity);
+    }
+    drag.velocity = 0;
+  }
+
+  root.addEventListener("pointerdown", onDragPointerDown);
+  document.addEventListener("pointermove", onDragPointerMove);
+  document.addEventListener("pointerup", onDragPointerUp);
 
   render();
 })();

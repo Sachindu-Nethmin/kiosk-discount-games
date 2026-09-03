@@ -221,7 +221,14 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 
 /* ---------- wheel ---------- */
 
-.wheel-stage { position: relative; width: 480px; height: 480px; }
+.wheel-stage {
+  position: relative; width: 480px; height: 480px;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+}
+.wheel-stage.dragging { cursor: grabbing; }
 
 .wheel-pointer {
   position: absolute; left: 50%; top: -6px;
