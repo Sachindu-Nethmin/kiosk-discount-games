@@ -13,6 +13,7 @@
     accent: "#7A3FF2",
     playsPerUser: 3,
     expiryDays: 14,
+    winRate: 3,
     headline: "Play once, win a discount",
     subhead: "Pick a game below. Every customer gets a try.",
     winMessage: "Show this code at the counter to redeem.",
@@ -22,18 +23,17 @@
       { label: "20% off", symbol: "20%", odds: 18, color: PASTELS[1] },
       { label: "Free coffee", symbol: "FREE", odds: 12, color: PASTELS[2] },
       { label: "5% off", symbol: "5%", odds: 25, color: PASTELS[3] },
-      { label: "50% off", symbol: "50%", odds: 3, color: PASTELS[4] },
-      { label: "Try again", symbol: "—", odds: 12, color: PASTELS[5] }
+      { label: "50% off", symbol: "50%", odds: 3, color: PASTELS[4] }
     ],
     reels: [
       { label: "10% off", symbol: "10%", odds: 40, color: PASTELS[0] },
-      { label: "20% off", symbol: "20%", odds: 25, color: PASTELS[1] },
-      { label: "Try again", symbol: "—", odds: 35, color: PASTELS[5] }
+      { label: "20% off", symbol: "20%", odds: 40, color: PASTELS[1] },
+      { label: "Free coffee", symbol: "FREE", odds: 20, color: PASTELS[2] }
     ],
     boxes: [
       { label: "5% off", symbol: "5%", odds: 45, color: PASTELS[3] },
-      { label: "Free coffee", symbol: "FREE", odds: 20, color: PASTELS[2] },
-      { label: "Try again", symbol: "—", odds: 35, color: PASTELS[5] }
+      { label: "Free coffee", symbol: "FREE", odds: 25, color: PASTELS[2] },
+      { label: "50% off", symbol: "50%", odds: 30, color: PASTELS[4] }
     ]
   };
 
@@ -136,7 +136,13 @@
 
   /* ---------- game logic ---------- */
 
-  function isWin(prize) { return !!prize && !/try again|no (win|prize)/i.test(prize.label); }
+  var LOSE_PRIZE = { label: "Try again", symbol: "—", color: PASTELS[5], won: false };
+
+  /* Roll towards a simple win rate: cfg.winRate is "1 in N" customers win. */
+  function roll() {
+    var rate = Math.max(1, Number(cfg.winRate) || 1);
+    return Math.random() < 1 / rate;
+  }
 
   function draw(list) {
     var prizes = list || cfg.prizes;
@@ -157,10 +163,13 @@
   }
 
   function land(prize) {
-    var p = prize || cfg.prizes[0];
+    var won = !!(prize && prize.won);
+    var p = won
+      ? prize
+      : clone(LOSE_PRIZE);
     setState({
       result: p,
-      coupon: isWin(p) ? makeCode() : "",
+      coupon: won ? makeCode() : "",
       busy: false,
       playsLeft: Math.max(0, state.playsLeft - 1)
     });
@@ -182,6 +191,8 @@
       extraTurns = 5;
       duration = 4.2;
     }
+    var won = roll();
+    var landed = won ? (function (q) { var c = clone(cfg.prizes[q]); c.won = true; return c; })(i) : LOSE_PRIZE;
     var parts = root.querySelectorAll(".wheel-disc, .wheel-labels");
     if (parts.length) {
       for (var j = 0; j < parts.length; j++) {
@@ -189,18 +200,31 @@
       }
     }
     setState({ busy: true, rotation: base + 360 * extraTurns + (360 - center) });
-    after(Math.round(duration * 1000) + 200, function () { land(cfg.prizes[i]); });
+    after(Math.round(duration * 1000) + 200, function () { land(landed); });
   }
 
   function pull() {
     if (state.busy || state.playsLeft <= 0) return;
-    var i = draw(cfg.reels);
-    var prizes = cfg.reels;
-    var win = isWin(prizes[i]);
-    var others = prizes.filter(function (_, k) { return k !== i; });
-    var finals = win
-      ? [prizes[i].symbol, prizes[i].symbol, prizes[i].symbol]
-      : [prizes[i].symbol, (others[0] || prizes[i]).symbol, (others[1] || prizes[i]).symbol];
+    var prizes = cfg.reels.length ? cfg.reels : cfg.prizes;
+    var won = roll();
+    var finals;
+    var outcome;
+    if (won) {
+      var wi = draw(prizes);
+      var wsym = prizes[wi].symbol;
+      finals = [wsym, wsym, wsym];
+      outcome = clone(prizes[wi]);
+      outcome.won = true;
+    } else {
+      var s0 = draw(prizes);
+      var s1 = draw(prizes);
+      var s2 = draw(prizes);
+      var symbols = [prizes[s0].symbol, prizes[s1].symbol, prizes[s2].symbol];
+      finals = (symbols[0] === symbols[1] && symbols[1] === symbols[2])
+        ? [symbols[0], prizes[(s0 + 1) % prizes.length].symbol, symbols[2]]
+        : symbols;
+      outcome = LOSE_PRIZE;
+    }
 
     setState({ busy: true });
     locked = 0;
@@ -220,7 +244,7 @@
         });
         if (k === 2) {
           clearInterval(reelInt); reelInt = null;
-          after(500, function () { land(prizes[i]); });
+          after(500, function () { land(outcome); });
         }
       });
     });
@@ -228,10 +252,13 @@
 
   function pick(k) {
     if (state.busy || state.picked !== null || state.playsLeft <= 0) return;
-    var i = draw(cfg.boxes);
+    var won = roll();
+    var chosen = won
+      ? (function (q) { var c = clone(cfg.boxes[q]); c.won = true; return c; })(draw(cfg.boxes))
+      : LOSE_PRIZE;
     setState({ busy: true, picked: k });
-    after(450, function () { setState({ revealed: true, pickedPrize: cfg.boxes[i].label }); });
-    after(1200, function () { land(cfg.boxes[i]); });
+    after(450, function () { setState({ revealed: true, pickedPrize: chosen.label }); });
+    after(1200, function () { land(chosen); });
   }
 
   function go(screen) {
@@ -265,7 +292,7 @@
       seg: seg,
       total: total,
       gradient: gradient,
-      won: isWin(state.result),
+      won: !!(state.result && state.result.won),
       expiryLine: "Valid until " + expiry.toLocaleDateString(undefined, {
         day: "numeric", month: "long", year: "numeric"
       })
@@ -482,6 +509,9 @@
               '<label class="label" for="f-plays">Plays per customer</label>' +
               '<input id="f-plays" class="field-lg" value="' + esc(cfg.playsPerUser) + '" ' +
                 'data-field="playsPerUser" data-fkey="playsPerUser" inputmode="numeric" />' +
+              '<label class="label" for="f-winrate">Win chance (1 in N customers)<br><span style="color:var(--faint);font-size:13px;">Lower N = more wins. 3 means ~1 in 3 win.</span></label>' +
+              '<input id="f-winrate" class="field-lg" value="' + esc(cfg.winRate) + '" ' +
+                'data-field="winRate" data-fkey="winRate" inputmode="numeric" />' +
               '<label class="label" for="f-expiry">Coupon valid for (days)</label>' +
               '<input id="f-expiry" class="field-lg" value="' + esc(cfg.expiryDays) + '" ' +
                 'data-field="expiryDays" data-fkey="expiryDays" inputmode="numeric" />' +
@@ -665,6 +695,8 @@
     }
 
     if (field === "expiryDays") { setCfg({ expiryDays: Number(value) || 0 }); return; }
+
+    if (field === "winRate") { setCfg({ winRate: Math.max(1, Number(value) || 1) }); return; }
 
     setCfg((function () { var o = {}; o[field] = value; return o; })());
   });
