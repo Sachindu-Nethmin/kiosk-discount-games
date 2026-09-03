@@ -104,8 +104,10 @@
   };
 
   var timers = [];
-  var reelInt = null;
   var locked = 0;
+  var spinActive = false;
+  var CELL_COUNT = 34;
+  var reelRaf = null;
   var paintedRotation = 0;
   var root = document.getElementById("app");
 
@@ -120,7 +122,8 @@
   function clearTimers() {
     timers.forEach(clearTimeout);
     timers = [];
-    if (reelInt) { clearInterval(reelInt); reelInt = null; }
+    if (reelRaf) { cancelAnimationFrame(reelRaf); reelRaf = null; }
+    spinActive = false;
   }
 
   function setState(patch) {
@@ -156,6 +159,36 @@
       if (SLOT_SYMBOLS[i].match.test(s)) return SLOT_SYMBOLS[i].img;
     }
     return null;
+  }
+
+  function slotFace(symbol) {
+    var img = slotImage(symbol);
+    if (img) return '<img class="reel-symbol" src="images/' + img + '" alt="' + esc(symbol) + '" />';
+    return esc(symbol);
+  }
+
+  /* Ordered classic reel palette so the strip spins through varied images. */
+  var SLOT_PALETTE = [
+    { symbol: "10%",  img: "cherry.jpg" },
+    { symbol: "20%",  img: "lemon.jpg" },
+    { symbol: "FREE", img: "bell.jpg" },
+    { symbol: "5%",   img: "bar.jpg" },
+    { symbol: "50%",  img: "seven.jpg" }
+  ];
+
+  function cellHeight(strip) {
+    var c = strip.querySelector(".reel-cell");
+    return c ? c.offsetHeight : 150;
+  }
+
+  function alignSlotStrips() {
+    if (state.screen !== "slots" || spinActive) return;
+    var strips = root.querySelectorAll(".reel-strip");
+    for (var i = 0; i < strips.length; i++) {
+      var h = cellHeight(strips[i]);
+      strips[i].style.transition = "none";
+      strips[i].style.transform = "translateY(" + (-(CELL_COUNT - 1) * h) + "px)";
+    }
   }
 
   /* Roll towards a simple win rate: cfg.winRate is "1 in N" customers win. */
@@ -245,27 +278,46 @@
         : symbols;
       outcome = LOSE_PRIZE;
     }
+    startSpin(finals, outcome);
+  }
 
-    setState({ busy: true });
-    locked = 0;
-    reelInt = setInterval(function () {
-      setState({
-        reels: state.reels.map(function (v, k) {
-          return locked > k ? v : prizes[Math.floor(Math.random() * prizes.length)].symbol;
-        })
-      });
-    }, 70);
+  /* Spin the reel strips: re-render with the winning symbols aligned to the last
+     cell, then transition each strip's translateY from a higher offset down to the
+     alignment, staggered left → right, with a hard deceleration like a real slot. */
+  function startSpin(finals, outcome) {
+    if (reelRaf) { cancelAnimationFrame(reelRaf); reelRaf = null; }
+    spinActive = true;
+    setState({ busy: true, reels: finals });
+    var strips = Array.prototype.slice.call(root.querySelectorAll(".reel-strip"));
+    if (!strips.length) return;
+    for (var i = 0; i < strips.length; i++) {
+      strips[i].style.transition = "none";
+      strips[i].classList.add("spinning");
+    }
 
-    [900, 1500, 2100].forEach(function (t, k) {
-      after(t, function () {
-        locked = k + 1;
-        setState({
-          reels: state.reels.map(function (v, j) { return j === k ? finals[k] : v; })
-        });
-        if (k === 2) {
-          clearInterval(reelInt); reelInt = null;
-          after(500, function () { land(outcome); });
+    reelRaf = requestAnimationFrame(function () {
+      reelRaf = requestAnimationFrame(function () {
+        var h = cellHeight(strips[0]);
+        var finalT = -(CELL_COUNT - 1) * h;
+        var startIdx = Math.min(CELL_COUNT - 2, 6 + Math.floor(Math.random() * 3));
+        for (var k = 0; k < strips.length; k++) {
+          strips[k].style.transition = "none";
+          strips[k].style.transform = "translateY(" + (-(startIdx + k) * h) + "px)";
         }
+        void root.offsetWidth; /* force reflow so the transition starts cleanly */
+        for (var j = 0; j < strips.length; j++) {
+          var dur = 1.7 + j * 0.18;
+          var delay = j * 0.24;
+          strips[j].style.transition =
+            "transform " + dur + "s cubic-bezier(.13,.7,.15,1) " + delay + "s";
+          strips[j].style.transform = "translateY(" + finalT + "px)";
+        }
+        var totalMs = Math.round((1.7 + (strips.length - 1) * 0.18 + (strips.length - 1) * 0.24) * 1000) + 280;
+        after(totalMs, function () {
+          spinActive = false;
+          for (var r = 0; r < strips.length; r++) { strips[r].classList.remove("spinning"); }
+          land(outcome);
+        });
       });
     });
   }
@@ -397,12 +449,15 @@
   }
 
   function slotsHtml() {
-    var reels = state.reels.map(function (symbol) {
-      var img = slotImage(symbol);
-      var face = img
-        ? '<img class="reel-symbol" src="images/' + img + '" alt="' + esc(symbol) + '" />'
-        : esc(symbol);
-      return '<div class="reel"><div class="reel-window">' + face + '</div><div class="reel-label">' + esc(symbol) + '</div></div>';
+    var reels = state.reels.map(function (symbol, k) {
+      var cells = "";
+      for (var i = 0; i < CELL_COUNT; i++) {
+        var sym = (i === CELL_COUNT - 1) ? symbol : SLOT_PALETTE[i % SLOT_PALETTE.length].symbol;
+        cells += '<div class="reel-cell">' + slotFace(sym) + '</div>';
+      }
+      return '<div class="reel" data-reel="' + k + '">' +
+        '<div class="reel-strip">' + cells + '</div>' +
+        '</div>';
     }).join("");
     var disabled = state.busy || state.playsLeft <= 0;
     return '' +
@@ -597,6 +652,7 @@
     root.innerHTML = html;
     restoreFocus(focus);
     spinWheelTo(state.rotation);
+    alignSlotStrips();
 
     document.title = (cfg.brandName ? cfg.brandName + " — " : "") + "Kiosk Discount Games";
   }

@@ -322,55 +322,56 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 
 .reel {
   width: 150px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+  height: 160px;
+  position: relative;
   border-radius: 14px;
   background: #f3f6fb;
   box-shadow: inset 0 0 0 2px #c9d6ea, inset 0 6px 12px rgba(0, 0, 0, .12);
   overflow: hidden;
 }
 
-.reel-window {
-  width: 100%;
-  height: 150px;
+.reel-strip {
+  position: absolute;
+  left: 0; top: 0;
+  display: flex;
+  flex-direction: column;
+  will-change: transform;
+}
+
+.reel-cell {
+  width: 150px;
+  height: 160px;
+  flex: 0 0 160px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-family: Fredoka, sans-serif;
   font-size: 46px; font-weight: 600;
   color: var(--ink);
+  background:
+    repeating-linear-gradient(180deg, #fff 0, #fff 150px, #f3f6fb 150px, #f3f6fb 160px);
 }
+
+.reel-strip.spinning .reel-cell { filter: blur(.5px); }
 
 .reel-symbol {
   width: 92%;
-  max-height: 130px;
+  max-height: 140px;
   object-fit: contain;
   border-radius: 8px;
   filter: drop-shadow(0 3px 3px rgba(0, 0, 0, .18));
-}
-
-.reel-label {
-  width: 100%;
-  padding: 4px 0 6px;
-  margin-top: auto;
-  text-align: center;
-  background: #e4ebf7;
-  color: #6b7690;
-  font-family: Fredoka, sans-serif;
-  font-size: 14px; font-weight: 600;
-  letter-spacing: 1px;
+  pointer-events: none;
 }
 
 .payline {
   position: absolute;
-  left: 12px; right: 12px; top: 50%;
+  left: 8px; right: 8px; top: 50%;
   height: 5px;
-  margin-top: 18px;
-  background: #ffd25e;
+  transform: translateY(-50%);
+  background: repeating-linear-gradient(90deg, #ffd25e 0, #ffd25e 14px, #e8aa2a 14px, #e8aa2a 20px);
   border-radius: 4px;
   box-shadow: 0 0 10px 2px rgba(255, 210, 94, .75);
-  opacity: .85;
+  opacity: .9;
   pointer-events: none;
   z-index: 3;
 }
@@ -636,10 +637,10 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   .slot-top { font-size: 17px; letter-spacing: 4px; }
   .slot-screen { padding: 12px; border-radius: 20px; }
   .slot-reels { gap: 8px; }
-  .reel { width: 92px; border-radius: 12px; }
-  .reel-window { height: 92px; font-size: 28px; }
-  .reel-symbol { max-height: 80px; }
-  .reel-label { font-size: 11px; padding: 3px 0 4px; }
+  .reel { width: 92px; height: 96px; border-radius: 12px; }
+  .reel-cell { width: 92px; height: 96px; flex: 0 0 96px; font-size: 28px;
+    background: repeating-linear-gradient(180deg, #fff 0, #fff 88px, #f3f6fb 88px, #f3f6fb 96px); }
+  .reel-symbol { max-height: 84px; }
   .slot-lever { min-width: 180px; font-size: 18px; margin-top: 20px; }
   .box-row { gap: 14px; }
   .mystery-box { width: 104px; height: 104px; font-size: 18px; border-radius: 22px; padding: 10px; }
