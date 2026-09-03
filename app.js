@@ -94,6 +94,7 @@
   var timers = [];
   var reelInt = null;
   var locked = 0;
+  var paintedRotation = 0;
   var root = document.getElementById("app");
 
   function after(ms, fn) { timers.push(setTimeout(fn, ms)); }
@@ -295,7 +296,7 @@
       var t = "rotate(" + (i * d.seg + d.seg / 2) + "deg) translateY(-172px)";
       return '<div class="wheel-label" style="transform: ' + t + ';">' + esc(p.label) + '</div>';
     }).join("");
-    var rot = "rotate(" + state.rotation + "deg)";
+    var rot = "rotate(" + paintedRotation + "deg)";
     var disabled = state.busy || state.playsLeft <= 0;
     return '' +
       '<div class="screen screen--game">' +
@@ -488,8 +489,23 @@
     var focus = captureFocus();
     root.innerHTML = html;
     restoreFocus(focus);
+    spinWheelTo(state.rotation);
 
     document.title = (cfg.brandName ? cfg.brandName + " — " : "") + "Kiosk Discount Games";
+  }
+
+  function spinWheelTo(deg) {
+    if (state.screen !== "wheel" || deg === paintedRotation) return;
+    var parts = root.querySelectorAll(".wheel-disc, .wheel-labels");
+    if (!parts.length) return;
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        paintedRotation = deg;
+        for (var i = 0; i < parts.length; i++) {
+          parts[i].style.transform = "rotate(" + deg + "deg)";
+        }
+      });
+    });
   }
 
   function captureFocus() {
