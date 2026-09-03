@@ -138,6 +138,26 @@
 
   var LOSE_PRIZE = { label: "Try again", symbol: "—", color: PASTELS[5], won: false };
 
+  /* Classic slot-machine fruit/casino symbols (CC0/public-domain assets in /images).
+     Map a configured prize `symbol` to a matching reel image, falling back to text. */
+  var SLOT_SYMBOLS = [
+    { match: /bar/i, img: "bar.svg" },
+    { match: /7|seven|777/i, img: "seven.svg" },
+    { match: /50|gold|top/i, img: "seven.svg" },
+    { match: /free|coffee|bell/i, img: "bell.svg" },
+    { match: /20|plum/i, img: "lemon.svg" },
+    { match: /cherry|10|10%/i, img: "cherry.svg" },
+    { match: /5|grape|orange/i, img: "bar.svg" }
+  ];
+
+  function slotImage(symbol) {
+    var s = String(symbol == null ? "" : symbol);
+    for (var i = 0; i < SLOT_SYMBOLS.length; i++) {
+      if (SLOT_SYMBOLS[i].match.test(s)) return SLOT_SYMBOLS[i].img;
+    }
+    return null;
+  }
+
   /* Roll towards a simple win rate: cfg.winRate is "1 in N" customers win. */
   function roll() {
     var rate = Math.max(1, Number(cfg.winRate) || 1);
@@ -378,17 +398,28 @@
 
   function slotsHtml() {
     var reels = state.reels.map(function (symbol) {
-      return '<div class="reel">' + esc(symbol) + '</div>';
+      var img = slotImage(symbol);
+      var face = img
+        ? '<img class="reel-symbol" src="images/' + img + '" alt="' + esc(symbol) + '" />'
+        : esc(symbol);
+      return '<div class="reel"><div class="reel-window">' + face + '</div><div class="reel-label">' + esc(symbol) + '</div></div>';
     }).join("");
     var disabled = state.busy || state.playsLeft <= 0;
     return '' +
-      '<div class="screen screen--game" style="gap: 38px;">' +
+      '<div class="screen screen--game" style="gap: 34px;">' +
         '<button class="back-btn" data-action="home">← Back</button>' +
         '<h1 class="game-title">Slot machine</h1>' +
-        '<div class="reel-box">' + reels + '</div>' +
-        '<button class="big-btn" data-action="pull"' + (disabled ? " disabled" : "") + '>' +
-          (state.busy ? "Rolling…" : "PULL") +
-        '</button>' +
+        '<div class="slot-machine">' +
+          '<div class="slot-screen">' +
+            '<div class="payline"></div>' +
+            '<div class="slot-reels">' + reels + '</div>' +
+          '</div>' +
+          '<div class="slot-top">' + esc(cfg.brandName) + '</div>' +
+          '<button class="slot-lever big-btn" data-action="pull"' + (disabled ? " disabled" : "") + '>' +
+            '<span class="lever-knob"></span>' +
+            (state.busy ? "Rolling…" : "PULL") +
+          '</button>' +
+        '</div>' +
       '</div>';
   }
 
