@@ -141,13 +141,13 @@
   /* Classic slot-machine fruit/casino symbols (CC0/public-domain assets in /images).
      Map a configured prize `symbol` to a matching reel image, falling back to text. */
   var SLOT_SYMBOLS = [
-    { match: /bar/i, img: "bar.svg" },
-    { match: /7|seven|777/i, img: "seven.svg" },
-    { match: /50|gold|top/i, img: "seven.svg" },
-    { match: /free|coffee|bell/i, img: "bell.svg" },
-    { match: /20|plum/i, img: "lemon.svg" },
-    { match: /cherry|10|10%/i, img: "cherry.svg" },
-    { match: /5|grape|orange/i, img: "bar.svg" }
+    { match: /bar/i, img: "bar.jpg" },
+    { match: /7|seven|777/i, img: "seven.jpg" },
+    { match: /50|gold|top/i, img: "seven.jpg" },
+    { match: /free|coffee|bell/i, img: "bell.jpg" },
+    { match: /20|plum/i, img: "lemon.jpg" },
+    { match: /cherry|10|10%/i, img: "cherry.jpg" },
+    { match: /5|grape|orange/i, img: "bar.jpg" }
   ];
 
   function slotImage(symbol) {
